@@ -1,6 +1,6 @@
 # eBay Item Listings with Anthropic Claude and AWS
 
-Welcome to the **eBay Item Listings Project**, an open-source solution that simplifies marketplace listing creation using the power of **Anthropic Claude** and **eBay APIs**, all hosted on **AWS Lambda** and **Bedrock**. This repository demonstrates how AI and cloud services can work together to automate repetitive tasks, saving time and effort for sellers and businesses.
+Hi to **eBay Item Listings Project**, an open-source solution/service that simplifies marketplace listing creation using the power of **Anthropic Claude** and **eBay APIs**, all hosted on **AWS Lambda** and **Bedrock**. This repository show how AI and cloud services can work together to automate repetitive tasks, saving time and effort for sellers and businesses.
 
 ## Problem Statement
 Creating eBay marketplace listings is often a time-consuming and manual process. Sellers need to write item descriptions, ensure compliance with eBay's formatting requirements, and manage API integrations for publishing listings. This project addresses these challenges by:
