@@ -21,6 +21,18 @@ def account_deletion():
     return "", 200
 
 
+@app.route("/ebay/callback")
+def oauth_callback():
+    code = request.args.get("code", "")
+    if code:
+        return f"""
+        <h2>eBay OAuth Code</h2>
+        <p>Copy the code below and paste it into your terminal:</p>
+        <textarea rows="4" cols="80" onclick="this.select()">{code}</textarea>
+        """, 200
+    return "No code received.", 400
+
+
 @app.route("/")
 def health():
     return "OK", 200
