@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: ebay-webhook
+    runtime: python
+    rootDir: webhook
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: EBAY_VERIFICATION_TOKEN
+        sync: false
+      - key: EBAY_ENDPOINT_URL
+        sync: false
