@@ -41,6 +41,17 @@ def analyze_card(image_bytes: bytes, caption: str = "") -> dict:
 
     prompt = f"""Analyze this Pokemon TCG card image carefully and return a single JSON object.
 
+IMPORTANT — look for a handwritten sticker, sticky note, or label anywhere in the photo (often on the card sleeve or corner). It may show:
+  • A price: digits like "35", "$15", "8.50", "35#" (treat # as $)
+  • A condition abbreviation: NM, LP, MP, HP, or DMG
+
+Condition abbreviation meanings:
+  NM  = Near Mint      → condition_enum: USED_EXCELLENT
+  LP  = Lightly Played → condition_enum: USED_VERY_GOOD
+  MP  = Moderately Played → condition_enum: USED_GOOD
+  HP  = Heavily Played → condition_enum: USED_ACCEPTABLE
+  DMG = Damaged        → condition_enum: FOR_PARTS_OR_NOT_WORKING
+
 Required fields:
 - card_name: string — full card name including suffix (e.g. "Charizard VMAX", "Pikachu V")
 - set_name: string — expansion/set name (e.g. "Darkness Ablaze", "Base Set")
@@ -48,10 +59,11 @@ Required fields:
 - rarity: string — rarity symbol/label (e.g. "Ultra Rare", "Holo Rare", "Common", "Secret Rare")
 - is_holo: boolean
 - ebay_title: string — eBay listing title, MAXIMUM 80 CHARACTERS, include "Pokemon Card", card name, set, number, rarity. Example: "Pokemon Card Charizard VMAX 020/189 Darkness Ablaze Ultra Rare Holo NM"
-- ebay_description: string — 3-4 sentence eBay listing description, may use basic HTML tags (<b>, <br>, <ul>). Mention the card name, set, number, condition, and that it ships in a protective sleeve.
-- condition_enum: string — one of: NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING. Use USED_EXCELLENT for Near Mint, USED_VERY_GOOD for Lightly Played, USED_GOOD for Moderately Played, USED_ACCEPTABLE for Heavily Played.
+- ebay_description: string — eBay listing description using basic HTML tags (<b>, <br>, <ul>). MUST start with the full listing title in <b> tags, then a line break, then 3-4 sentences covering the card name, set, number, condition, and that it ships in a protective sleeve. If the seller included any extra notes in their caption beyond the condition (e.g. "pulled from booster pack", "great gift"), incorporate those naturally into the description.
+- condition_enum: string — one of: NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING. If a condition abbreviation sticker is visible use that mapping above; otherwise use the caption hint or infer from the card's visual condition.
 - condition_label: string — human-readable condition matching the enum (e.g. "Near Mint", "Lightly Played")
-- condition_known: boolean — true if condition was stated in the caption, false if you are guessing from image alone{condition_hint}
+- condition_known: boolean — true if condition came from a visible sticker/note OR from the caption; false if guessing from image alone
+- price_from_image: number or null — the numeric price from any visible sticker/note (digits only, no $ sign). If no price is visible return null.{condition_hint}
 
 Return ONLY the JSON object, no markdown fences or other text."""
 

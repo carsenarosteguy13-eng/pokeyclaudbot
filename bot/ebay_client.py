@@ -125,19 +125,58 @@ def _ensure_location() -> str:
 # Listing lifecycle
 # ---------------------------------------------------------------------------
 
-def create_listing(card_info: dict, image_url: str, price: float) -> dict:
+def create_listing(card_info: dict, image_urls: list, price: float) -> dict:
     """
     Create and publish an eBay listing.
+    image_urls: list of public HTTPS image URLs (first = front, second = back).
     Returns dict with keys: sku, offer_id, listing_id, ebay_url.
     """
     sku = f"POKE-{uuid.uuid4().hex[:12].upper()}"
     location_key = _ensure_location()
     policies = _get_policies()
 
-    # Build aspects for better search visibility
+    # Category 183454 (Pokemon TCG Individual Cards) uses special condition IDs:
+    #   2750 = Graded   3000 = Used (generic)   4000 = Ungraded
+    # All our ungraded listings use 4000 ("Ungraded") = USED_VERY_GOOD enum.
+    # Condition 4000 REQUIRES conditionDescriptor "Card Condition" (ID 40001).
+    inventory_condition = "USED_VERY_GOOD"  # maps to condition ID 4000 = Ungraded
+
+    # Map condition label → conditionDescriptorValueId for aspect 40001
+    _condition_enum = card_info.get("condition_enum", "USED_VERY_GOOD")
+    _descriptor_value_map = {
+        "NEW":                      "400010",  # Near mint or better
+        "LIKE_NEW":                 "400010",
+        "USED_EXCELLENT":           "400010",  # Near mint or better
+        "USED_VERY_GOOD":           "400015",  # Lightly played (Excellent)
+        "USED_GOOD":                "400016",  # Moderately played (Very good)
+        "USED_ACCEPTABLE":          "400017",  # Heavily played (Poor)
+        "FOR_PARTS_OR_NOT_WORKING": "400017",  # closest: Heavily played (Poor)
+    }
+    descriptor_value_id = _descriptor_value_map.get(_condition_enum, "400015")
+    condition_descriptors = [
+        {
+            "name": "40001",
+            "values": [descriptor_value_id],   # plain string, not an object
+        }
+    ]
+
+    # Human-readable label for the Card Condition aspect (also kept in product.aspects)
+    _card_condition_aspect = {
+        "NEW":                       "Near Mint or Better",
+        "LIKE_NEW":                  "Near Mint or Better",
+        "USED_EXCELLENT":            "Near Mint or Better",
+        "USED_VERY_GOOD":            "Lightly Played",
+        "USED_GOOD":                 "Moderately Played",
+        "USED_ACCEPTABLE":           "Heavily Played",
+        "FOR_PARTS_OR_NOT_WORKING":  "Damaged",
+    }
+    card_condition = _card_condition_aspect.get(_condition_enum, "Lightly Played")
+
+    # Build aspects for search visibility
     aspects: dict = {
         "Card Name": [card_info["card_name"]],
         "Game": ["Pokémon"],
+        "Card Condition": [card_condition],
     }
     if card_info.get("set_name"):
         aspects["Set"] = [card_info["set_name"]]
@@ -147,22 +186,30 @@ def create_listing(card_info: dict, image_url: str, price: float) -> dict:
         aspects["Rarity"] = [card_info["rarity"]]
 
     # Inventory item
+    inv_body = {
+        "availability": {"shipToLocationAvailability": {"quantity": 1}},
+        "condition": inventory_condition,
+        "conditionDescriptors": condition_descriptors,
+        "conditionDescription": card_info.get("condition_label", ""),
+        "product": {
+            "title": card_info["ebay_title"][:80],
+            "description": card_info["ebay_description"],
+            "imageUrls": image_urls,
+            "aspects": aspects,
+        },
+    }
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "eBay inventory PUT: condition=%s descriptor=%s aspects=%s",
+        inventory_condition, condition_descriptors, aspects
+    )
     r = requests.put(
         f"{EBAY_BASE_URL}/sell/inventory/v1/inventory_item/{sku}",
         headers=_headers(),
-        json={
-            "availability": {"shipToLocationAvailability": {"quantity": 1}},
-            "condition": card_info["condition_enum"],
-            "conditionDescription": card_info.get("condition_label", ""),
-            "product": {
-                "title": card_info["ebay_title"][:80],
-                "description": card_info["ebay_description"],
-                "imageUrls": [image_url],
-                "aspects": aspects,
-            },
-        },
+        json=inv_body,
         timeout=20,
     )
+    _logging.getLogger(__name__).info("eBay inventory PUT response: %s %s", r.status_code, r.text[:500] if r.text else "")
     if r.status_code not in (200, 201, 204):
         raise RuntimeError(f"eBay inventory item error: {r.status_code} {r.text}")
 
