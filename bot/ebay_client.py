@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 POKEMON_CATEGORY_ID = "183454"  # Pokémon TCG Individual Cards
 
 _token_cache: dict = {"token": None, "expires_at": 0.0}
+_fulfillment_token_cache: dict = {"token": None, "expires_at": 0.0}
 _policies_cache: dict | None = None       # payment + return policy IDs
 _fulfillment_tiers: dict | None = None    # {"envelope"|"ground"|"priority"|"default": policy_id}
 
@@ -22,6 +23,7 @@ _fulfillment_tiers: dict | None = None    # {"envelope"|"ground"|"priority"|"def
 # ---------------------------------------------------------------------------
 
 def _get_access_token() -> str:
+    """Access token for sell.inventory + sell.account (listing operations)."""
     if _token_cache["token"] and time.time() < _token_cache["expires_at"] - 60:
         return _token_cache["token"]
 
@@ -37,8 +39,7 @@ def _get_access_token() -> str:
             "refresh_token": EBAY_REFRESH_TOKEN,
             "scope": (
                 "https://api.ebay.com/oauth/api_scope/sell.inventory "
-                "https://api.ebay.com/oauth/api_scope/sell.account.readonly "
-                "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
+                "https://api.ebay.com/oauth/api_scope/sell.account.readonly"
             ),
         },
         timeout=15,
@@ -48,6 +49,46 @@ def _get_access_token() -> str:
     _token_cache["token"] = data["access_token"]
     _token_cache["expires_at"] = time.time() + data["expires_in"]
     return _token_cache["token"]
+
+
+def _get_fulfillment_token() -> str | None:
+    """
+    Access token for sell.fulfillment.readonly (sold-order polling).
+    Returns None if the refresh token doesn't have this scope yet —
+    caller should re-run get_refresh_token.py to enable it.
+    """
+    if _fulfillment_token_cache["token"] and time.time() < _fulfillment_token_cache["expires_at"] - 60:
+        return _fulfillment_token_cache["token"]
+
+    creds = base64.b64encode(f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode()).decode()
+    try:
+        r = requests.post(
+            f"{EBAY_BASE_URL}/identity/v1/oauth2/token",
+            headers={
+                "Authorization": f"Basic {creds}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": EBAY_REFRESH_TOKEN,
+                "scope": "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+            },
+            timeout=15,
+        )
+        if r.status_code == 400:
+            logger.warning(
+                "sell.fulfillment.readonly not in refresh token — sold detection disabled. "
+                "Re-run get_refresh_token.py to enable automatic sold notifications."
+            )
+            return None
+        r.raise_for_status()
+    except requests.HTTPError:
+        return None
+
+    data = r.json()
+    _fulfillment_token_cache["token"] = data["access_token"]
+    _fulfillment_token_cache["expires_at"] = time.time() + data["expires_in"]
+    return _fulfillment_token_cache["token"]
 
 
 def _headers() -> dict:
@@ -365,10 +406,17 @@ def check_for_sold_items(lookback_hours: int = 25) -> list[dict]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
     cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
+    token = _get_fulfillment_token()
+    if token is None:
+        return []
+
     try:
         r = requests.get(
             f"{EBAY_BASE_URL}/sell/fulfillment/v1/order",
-            headers=_headers(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
             params={"filter": f"creationdate:[{cutoff_str}..]", "limit": 50},
             timeout=20,
         )
