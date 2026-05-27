@@ -148,7 +148,12 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await status.edit_text(f"Couldn't analyze the card: {exc}")
         return ConversationHandler.END
 
-    # back_image_bytes already resolved above (before Claude call)
+    # If Claude says the second image (companion) is actually the front, swap so
+    # eBay always gets the front card as the primary (first) image.
+    if back_image_bytes is not None and info.get("first_image_is_front") is False:
+        image_bytes, back_image_bytes = back_image_bytes, image_bytes
+        logger.info("Swapped front/back images based on Claude first_image_is_front=False")
+
     context.user_data["pending"] = {
         "card_info": info,
         "image_bytes": image_bytes,

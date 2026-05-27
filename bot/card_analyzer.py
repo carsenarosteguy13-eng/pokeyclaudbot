@@ -42,6 +42,7 @@ def analyze_card(image_bytes: bytes, caption: str = "", companion_bytes: bytes |
     )
 
     two_image_note = ""
+    two_image_field = ""
     if companion_bytes:
         two_image_note = (
             "You have been sent 2 photos of the same card. "
@@ -49,6 +50,10 @@ def analyze_card(image_bytes: bytes, caption: str = "", companion_bytes: bytes |
             "the other shows the BACK (standard Pokémon TCG back design with the Pokéball logo). "
             "Analyze the FRONT photo only — fill in ALL required fields from the front card. "
             "Ignore the card back entirely.\n\n"
+        )
+        two_image_field = (
+            "\n- first_image_is_front: boolean — true if the FIRST image above shows the card "
+            "front, false if the SECOND image shows the card front."
         )
 
     prompt = f"""{two_image_note}Analyze this Pokemon TCG card image carefully and return a single JSON object.
@@ -75,7 +80,7 @@ Required fields:
 - condition_enum: string — one of: NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING. If a condition abbreviation sticker is visible use that mapping above; otherwise use the caption hint or infer from the card's visual condition.
 - condition_label: string — human-readable condition matching the enum (e.g. "Near Mint", "Lightly Played")
 - condition_known: boolean — true if condition came from a visible sticker/note OR from the caption; false if guessing from image alone
-- price_from_image: number or null — the numeric price from any visible sticker/note (digits only, no $ sign). If no price is visible return null.{condition_hint}
+- price_from_image: number or null — the numeric price from any visible sticker/note (digits only, no $ sign). If no price is visible return null.{two_image_field}{condition_hint}
 
 Return ONLY the JSON object, no markdown fences or other text."""
 
