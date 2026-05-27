@@ -35,6 +35,7 @@ import card_analyzer
 import ebay_client
 import image_uploader
 import listing_store
+import sheets_client
 from config import TELEGRAM_BOT_TOKEN
 
 logging.basicConfig(
@@ -279,6 +280,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         condition=info.get("condition_label", ""),
         ebay_url=result["ebay_url"],
     )
+    await asyncio.to_thread(
+        sheets_client.add_listing, info, price, result["ebay_url"], result["sku"]
+    )
 
     context.user_data.pop("pending", None)
     context.user_data.pop("_state", None)
@@ -296,6 +300,52 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("_state", None)
     await update.message.reply_text("Listing cancelled.")
     return ConversationHandler.END
+
+
+# ---------------------------------------------------------------------------
+# Background sold-item checker (polls eBay Orders API every 10 min)
+# ---------------------------------------------------------------------------
+
+async def _sold_checker_loop(app) -> None:
+    """Background task: detect sold items and notify via Telegram + update sheet."""
+    await asyncio.sleep(30)  # brief startup delay
+    while True:
+        try:
+            sold_items = await asyncio.to_thread(ebay_client.check_for_sold_items)
+            for item in sold_items:
+                listing = listing_store.get_by_sku(item["sku"])
+                if not listing:
+                    continue
+                if listing.get("sold_price"):
+                    continue  # already recorded
+
+                sold_price = item["sold_price"]
+                sold_date  = item["sold_date"]
+                listing_store.mark_sold(listing["id"], sold_price, sold_date)
+                await asyncio.to_thread(sheets_client.mark_sold, item["sku"], sold_price)
+
+                try:
+                    await app.bot.send_message(
+                        chat_id=listing["chat_id"],
+                        text=(
+                            f"🎉 Sold!\n\n"
+                            f"{listing['card_name']} ({listing['set_name']})\n"
+                            f"Condition: {listing['condition']}\n"
+                            f"Listed at: ${listing['price']:.2f}  →  "
+                            f"Sold for: ${sold_price:.2f}"
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Failed to send sold notification")
+
+        except Exception:
+            logger.exception("Sold checker error")
+
+        await asyncio.sleep(600)  # 10 minutes
+
+
+async def _post_init(app) -> None:
+    asyncio.create_task(_sold_checker_loop(app))
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +405,7 @@ async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         await asyncio.to_thread(ebay_client.end_listing, listing["offer_id"])
         listing_store.delete(db_id)
+        await asyncio.to_thread(sheets_client.mark_removed, listing["sku"])
         await query.edit_message_text(
             f"Removed: {listing['card_name']} ({listing['set_name']})\n"
             f"The eBay listing has been ended."
@@ -371,7 +422,13 @@ async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 def main() -> None:
     listing_store.init_db()
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(True)
+        .post_init(_post_init)
+        .build()
+    )
 
     listing_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.PHOTO, photo_received)],

@@ -24,9 +24,17 @@ def init_db() -> None:
                 price        REAL    NOT NULL,
                 condition    TEXT,
                 ebay_url     TEXT,
-                created_at   TEXT    DEFAULT (datetime('now'))
+                created_at   TEXT    DEFAULT (datetime('now')),
+                sold_price   REAL,
+                sold_date    TEXT
             )
         """)
+        # Add new columns to existing databases without breaking them
+        for col in ("sold_price REAL", "sold_date TEXT"):
+            try:
+                conn.execute(f"ALTER TABLE listings ADD COLUMN {col}")
+            except Exception:
+                pass
         conn.commit()
 
 
@@ -61,4 +69,19 @@ def get_by_id(db_id: int) -> dict | None:
 def delete(db_id: int) -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM listings WHERE id = ?", (db_id,))
+        conn.commit()
+
+
+def get_by_sku(sku: str) -> dict | None:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM listings WHERE sku = ?", (sku,)).fetchone()
+    return dict(row) if row else None
+
+
+def mark_sold(db_id: int, sold_price: float, sold_date: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE listings SET sold_price = ?, sold_date = ? WHERE id = ?",
+            (sold_price, sold_date, db_id),
+        )
         conn.commit()

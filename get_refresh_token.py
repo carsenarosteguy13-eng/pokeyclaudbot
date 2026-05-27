@@ -31,7 +31,7 @@ def main():
     scopes = " ".join([
         "https://api.ebay.com/oauth/api_scope/sell.inventory",
         "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
-        "offline_access",
+        "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
     ])
 
     auth_url = (
