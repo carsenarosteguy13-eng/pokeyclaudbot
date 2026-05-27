@@ -3,7 +3,7 @@ services:
     name: pokemon-telegram-bot
     runtime: python
     buildCommand: pip install -r bot/requirements.txt
-    startCommand: gunicorn -w 1 --chdir bot render_start:flask_app
+    startCommand: python bot/render_start.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false

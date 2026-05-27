@@ -1,62 +1,46 @@
 """
 Render deployment entry point.
 
-Starts a minimal Flask health server (required by Render's free web tier)
-alongside the Telegram polling bot in a background thread.
+Flask health server runs in a background daemon thread (Render needs HTTP).
+Telegram bot runs in the MAIN thread — required by python-telegram-bot v21
+because run_polling() installs signal handlers which only work on the main thread.
 
-Start command:  gunicorn -w 1 --chdir bot render_start:flask_app
+Start command:  python render_start.py
 """
 
 import asyncio
 import os
 import sys
 import threading
-import traceback
 from pathlib import Path
 
-# Ensure the bot package directory is on the path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from flask import Flask
 
-flask_app = Flask(__name__)
+def _run_flask() -> None:
+    """Serve a tiny health-check endpoint in a background thread."""
+    from flask import Flask
+    app = Flask(__name__)
 
-_bot_error: str = ""
+    @app.route("/")
+    @app.route("/health")
+    def health():
+        return "OK", 200
 
-
-@flask_app.route("/")
-@flask_app.route("/health")
-def health():
-    return "OK", 200
-
-
-@flask_app.route("/debug")
-def debug():
-    alive = _bot_thread.is_alive()
-    return (
-        f"bot_thread_alive: {alive}\n"
-        f"error: {_bot_error or 'none'}\n"
-    ), 200
+    port = int(os.environ.get("PORT", 10000))
+    # Silence Flask's startup banner and use threaded=False (single request at a time is fine)
+    import logging
+    log = logging.getLogger("werkzeug")
+    log.setLevel(logging.ERROR)
+    app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
 
 
-def _run_bot() -> None:
-    """Run the Telegram bot in its own asyncio event loop (blocking)."""
-    global _bot_error
-    try:
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        import telegram_bot
-        telegram_bot.main()
-    except Exception:
-        _bot_error = traceback.format_exc()
+# Start the health server in a daemon thread FIRST so Render's health check passes
+_flask_thread = threading.Thread(target=_run_flask, name="flask-health", daemon=True)
+_flask_thread.start()
 
-
-# Start the bot thread when this module is first imported.
-# gunicorn imports the module once (single worker -w 1), so this runs exactly once.
-_bot_thread = threading.Thread(target=_run_bot, name="telegram-bot", daemon=True)
-_bot_thread.start()
-
-
+# Now run the bot in the main thread
 if __name__ == "__main__":
-    # Local fallback: run Flask dev server
-    port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host="0.0.0.0", port=port)
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    import telegram_bot
+    telegram_bot.main()
