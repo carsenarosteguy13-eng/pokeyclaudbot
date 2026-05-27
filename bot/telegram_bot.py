@@ -60,12 +60,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Send 1 or 2 photos of a card (front, or front + back together).\n"
         "Put a sticker with condition (NM/LP/MP/HP/DMG) and price for instant listing.\n\n"
         "Commands:\n"
-        "  /confirm  — post the card on eBay + log to Google Sheet\n"
-        "  /save     — log to Google Sheet only (no eBay listing)\n"
-        "  /batch    — photograph 6-9 cards at once → log all to Google Sheet\n"
-        "  /listings — view your active eBay listings\n"
-        "  /remove   — take a listing down\n"
-        "  /cancel   — cancel current operation"
+        "  /confirm      — post the card on eBay + log to Google Sheet\n"
+        "  /save         — log to Google Sheet only (no eBay listing)\n"
+        "  /batch        — photograph 6-9 cards at once → log all to Google Sheet\n"
+        "  /listings     — view your active eBay listings\n"
+        "  /remove       — take an eBay listing down\n"
+        "  /removestock  — remove an in-stock (non-eBay) card from inventory\n"
+        "  /cancel       — cancel current operation"
     )
 
 
@@ -520,6 +521,50 @@ async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def cmd_removestock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show in-stock (non-eBay) cards and let the user mark one as removed."""
+    cards = await asyncio.to_thread(sheets_client.get_in_stock)
+    if not cards:
+        await update.message.reply_text(
+            "No in-stock cards found in your Google Sheet.\n"
+            "(Cards added via /save or /batch show up here.)"
+        )
+        return
+
+    # Telegram caps inline keyboards at 100 rows; show the 50 most recent to be safe
+    display = cards[:50]
+    keyboard = []
+    for c in display:
+        label = f"{c['card_name']}"
+        if c.get("set_name"):
+            label += f" ({c['set_name']})"
+        if c.get("price"):
+            label += f" — {c['price']}"
+        if c.get("condition"):
+            label += f" [{c['condition']}]"
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"removestock:{c['row']}")])
+
+    keyboard.append([InlineKeyboardButton("Cancel", callback_data="removestock:cancel")])
+    note = f" (showing 50 most recent of {len(cards)})" if len(cards) > 50 else ""
+    await update.message.reply_text(
+        f"Select an in-stock card to remove{note}:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def removestock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    payload = query.data.split(":", 1)[1]
+    if payload == "cancel":
+        await query.edit_message_text("Removal cancelled.")
+        return
+    row = int(payload)
+    await query.edit_message_text("Removing from inventory...")
+    await asyncio.to_thread(sheets_client.mark_removed_row, row)
+    await query.edit_message_text("Removed from inventory (status set to Removed in Google Sheet).")
+
+
 async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -606,7 +651,9 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("listings", cmd_listings))
     app.add_handler(CommandHandler("remove", cmd_remove))
+    app.add_handler(CommandHandler("removestock", cmd_removestock))
     app.add_handler(CallbackQueryHandler(remove_callback, pattern=r"^remove:"))
+    app.add_handler(CallbackQueryHandler(removestock_callback, pattern=r"^removestock:"))
     app.add_handler(listing_conv)
     app.add_handler(batch_conv)
 

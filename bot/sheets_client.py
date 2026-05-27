@@ -171,6 +171,44 @@ def add_inventory_batch(cards: list[dict]) -> int:
         return 0
 
 
+def get_in_stock() -> list[dict]:
+    """Return all rows where Status = 'In Stock', newest first."""
+    if not _is_configured():
+        return []
+    try:
+        ws = _get_worksheet()
+        all_rows = ws.get_all_values()
+        result = []
+        for i, row in enumerate(all_rows[1:], start=2):  # row 1 = header; data starts at 2
+            while len(row) < len(HEADERS):
+                row.append("")
+            if row[_COL["Status"] - 1] == "In Stock":
+                result.append({
+                    "row":       i,
+                    "card_name": row[_COL["Card Name"] - 1],
+                    "set_name":  row[_COL["Set"] - 1],
+                    "condition": row[_COL["Condition"] - 1],
+                    "price":     row[_COL["List Price"] - 1],
+                    "date":      row[_COL["Date Listed"] - 1],
+                })
+        return list(reversed(result))  # newest first
+    except Exception:
+        logger.exception("Sheet: failed to fetch in-stock items")
+        return []
+
+
+def mark_removed_row(row: int) -> None:
+    """Update Status to 'Removed' for a given 1-based sheet row number."""
+    if not _is_configured():
+        return
+    try:
+        ws = _get_worksheet()
+        ws.update_cell(row, _COL["Status"], "Removed")
+        logger.info("Sheet: marked row %d as Removed", row)
+    except Exception:
+        logger.exception("Sheet: failed to mark row %d as Removed", row)
+
+
 def add_listing(card_info: dict, price: float, ebay_url: str, sku: str) -> None:
     """Append a new row for a freshly created listing."""
     if not _is_configured():
