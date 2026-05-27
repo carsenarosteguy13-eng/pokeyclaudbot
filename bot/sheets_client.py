@@ -33,7 +33,19 @@ _ws_cache = None
 
 
 def _is_configured() -> bool:
-    return bool(os.getenv("GOOGLE_SHEETS_CREDENTIALS") and os.getenv("GOOGLE_SHEETS_ID"))
+    has_creds = bool(
+        os.getenv("GOOGLE_SHEETS_CREDENTIALS_FILE") or os.getenv("GOOGLE_SHEETS_CREDENTIALS")
+    )
+    return has_creds and bool(os.getenv("GOOGLE_SHEETS_ID"))
+
+
+def _load_creds_info() -> dict:
+    """Load service account JSON from file path or inline env var."""
+    path = os.getenv("GOOGLE_SHEETS_CREDENTIALS_FILE")
+    if path:
+        with open(path) as f:
+            return json.load(f)
+    return json.loads(os.environ["GOOGLE_SHEETS_CREDENTIALS"])
 
 
 def _get_worksheet():
@@ -44,8 +56,7 @@ def _get_worksheet():
     import gspread
     from google.oauth2.service_account import Credentials
 
-    creds_raw = os.environ["GOOGLE_SHEETS_CREDENTIALS"]
-    creds_info = json.loads(creds_raw)
+    creds_info = _load_creds_info()
     creds = Credentials.from_service_account_info(
         creds_info,
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
