@@ -130,17 +130,20 @@ def analyze_batch(image_bytes: bytes) -> list[dict]:
     image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
     prompt = """\
-You are analyzing a photo containing multiple Pokémon TCG cards laid out together (typically 6-9 cards).
+You are analyzing a photo containing multiple Pokémon TCG cards laid out together.
 
-TASK: Identify EVERY VISIBLE card in the photo.
+STEP 1 — COUNT: Look at the entire image carefully. Count every card visible, \
+including ones near the edges or partially cut off. Remember that number.
 
-For EACH card:
-1. Read the card face: full card name (including suffix like V, VMAX, GX, EX), set name, \
-card number printed at the bottom, and rarity.
-2. Look carefully for a handwritten sticker or label on the card or its sleeve. It may show:
-   • A price: digits like "35", "$15", "8.50", "35#" — treat # as $
-   • A condition abbreviation: NM, LP, MP, HP, or DMG
-3. If no condition sticker is visible, estimate condition from the card's appearance.
+STEP 2 — IDENTIFY EACH ONE: Starting from the top-left, work across each row \
+left-to-right, then move to the next row. For EVERY card:
+  a) Read the card name (including suffix: V, VMAX, VSTAR, GX, EX, TAG TEAM, etc.)
+  b) Read the set name and card number at the bottom of the card
+  c) Note the rarity (Ultra Rare, Holo Rare, Common, Rare, Secret Rare, etc.)
+  d) Look for a handwritten sticker or label on the card or its sleeve showing:
+       • A price: "35", "$15", "8.50", "35#" — treat # as $
+       • A condition code: NM, LP, MP, HP, or DMG
+  e) If no condition sticker: estimate from the card's appearance
 
 Condition meanings:
   NM  = Near Mint
@@ -149,26 +152,36 @@ Condition meanings:
   HP  = Heavily Played
   DMG = Damaged
 
-Return a single JSON object with a "cards" array. Each element:
+STEP 3 — VERIFY: Before writing your answer, confirm your "cards" array has \
+one entry for every card you counted in Step 1. If it doesn't, go back and \
+find the missing ones.
+
+Return a single JSON object:
 {
-  "card_name": "full card name including suffix",
-  "set_name": "expansion set name",
-  "card_number": "number printed on card",
-  "rarity": "Ultra Rare / Holo Rare / Common / etc.",
-  "condition_label": "Near Mint",
-  "condition_known": true,
-  "price_from_image": 25.00
+  "cards": [
+    {
+      "card_name": "full name including suffix",
+      "set_name": "expansion set name",
+      "card_number": "number on card",
+      "rarity": "Ultra Rare / Holo Rare / Common / etc.",
+      "condition_label": "Near Mint",
+      "condition_known": true,
+      "price_from_image": 25.00
+    }
+  ]
 }
 
-Set price_from_image to null if no price sticker is visible.
-Set condition_known to false if you are estimating condition from appearance.
-Include ALL visible cards — even partially obscured ones (use your best guess).
+Rules:
+- price_from_image must be null if no price sticker is visible (do NOT guess a price)
+- condition_known must be false if you are estimating from appearance
+- Include EVERY card — even partially obscured ones (best guess is fine)
+- The "cards" array length MUST equal the count from Step 1
 
 Return ONLY the JSON object, no markdown fences or other text."""
 
     response = _client.messages.create(
         model="claude-opus-4-7",
-        max_tokens=2048,
+        max_tokens=4096,
         messages=[{
             "role": "user",
             "content": [

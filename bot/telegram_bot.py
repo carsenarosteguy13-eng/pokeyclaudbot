@@ -355,13 +355,15 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Batch inventory mode\n\n"
-        "Send ONE photo with up to 9 cards laid out face-up. "
-        "I'll identify each card and add them all to your Google Sheet.\n\n"
-        "Tips for the best results:\n"
+        "Send ONE photo with up to 9 cards laid out face-up.\n\n"
+        "For best accuracy, send as a FILE (not a photo):\n"
+        "  📎 Tap the paperclip → File → choose your photo\n"
+        "This skips Telegram's compression and gives Claude much clearer images.\n\n"
+        "Tips:\n"
         "  • Lay cards face-up in good lighting\n"
         "  • Avoid overlapping cards\n"
-        "  • Price/condition stickers on each card will be read automatically\n\n"
-        "Send the photo now, or /cancel to abort."
+        "  • Price/condition stickers will be read automatically\n\n"
+        "Send the photo or file now, or /cancel to abort."
     )
     return BATCH_WAITING_PHOTO
 
@@ -369,8 +371,12 @@ async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def batch_photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     status = await update.message.reply_text("Analyzing all cards — this may take a few seconds...")
 
-    photo_file = await update.message.photo[-1].get_file()
-    image_bytes = bytes(await photo_file.download_as_bytearray())
+    # Accept both compressed photos and uncompressed file uploads
+    if update.message.document:
+        tg_file = await update.message.document.get_file()
+    else:
+        tg_file = await update.message.photo[-1].get_file()
+    image_bytes = bytes(await tg_file.download_as_bytearray())
 
     try:
         cards = await asyncio.to_thread(card_analyzer.analyze_batch, image_bytes)
@@ -636,6 +642,7 @@ def main() -> None:
         states={
             BATCH_WAITING_PHOTO: [
                 MessageHandler(filters.PHOTO, batch_photo_received),
+                MessageHandler(filters.Document.IMAGE, batch_photo_received),
             ],
             BATCH_CONFIRMING: [
                 CommandHandler("save", batch_save),
