@@ -4,13 +4,14 @@ Render deployment entry point.
 Starts a minimal Flask health server (required by Render's free web tier)
 alongside the Telegram polling bot in a background thread.
 
-Start command:  gunicorn -w 1 render_start:flask_app
+Start command:  gunicorn -w 1 --chdir bot render_start:flask_app
 """
 
 import asyncio
 import os
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 # Ensure the bot package directory is on the path
@@ -20,6 +21,8 @@ from flask import Flask
 
 flask_app = Flask(__name__)
 
+_bot_error: str = ""
+
 
 @flask_app.route("/")
 @flask_app.route("/health")
@@ -27,11 +30,24 @@ def health():
     return "OK", 200
 
 
+@flask_app.route("/debug")
+def debug():
+    alive = _bot_thread.is_alive()
+    return (
+        f"bot_thread_alive: {alive}\n"
+        f"error: {_bot_error or 'none'}\n"
+    ), 200
+
+
 def _run_bot() -> None:
     """Run the Telegram bot in its own asyncio event loop (blocking)."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    import telegram_bot
-    telegram_bot.main()
+    global _bot_error
+    try:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        import telegram_bot
+        telegram_bot.main()
+    except Exception:
+        _bot_error = traceback.format_exc()
 
 
 # Start the bot thread when this module is first imported.
