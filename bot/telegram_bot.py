@@ -153,6 +153,40 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await status.edit_text(f"Couldn't analyze the card: {exc}")
         return ConversationHandler.END
 
+    # Auto-detect multi-card batch photo — no /batch command needed
+    if info.get("multi_card"):
+        logger.info("multi_card detected — switching to batch analysis")
+        await status.edit_text("Multiple cards detected — analyzing each one...")
+        try:
+            cards = await asyncio.to_thread(card_analyzer.analyze_batch, image_bytes)
+        except Exception as exc:
+            logger.exception("Batch analysis failed")
+            await status.edit_text(f"Couldn't analyze the cards: {exc}")
+            return ConversationHandler.END
+
+        if not cards:
+            await status.edit_text("No cards detected. Try again with a clearer photo.")
+            return ConversationHandler.END
+
+        context.user_data["batch_cards"] = cards
+        lines = [f"Found {len(cards)} card(s):\n"]
+        for i, card in enumerate(cards, 1):
+            price = card.get("price_from_image")
+            price_str = f"${price:.2f}" if price else "no price"
+            cond = card.get("condition_label", "?")
+            cond_flag = "" if card.get("condition_known") else " (?)"
+            lines.append(
+                f"{i}. {card.get('card_name', 'Unknown')} "
+                f"({card.get('set_name', '?')} #{card.get('card_number', '?')})\n"
+                f"   {cond}{cond_flag}  —  {price_str}"
+            )
+        lines.append(
+            "\nCondition/price marked (?) were estimated from appearance.\n\n"
+            "Send /save to add all to your Google Sheet, or /cancel to abort."
+        )
+        await status.edit_text("\n".join(lines))
+        return BATCH_CONFIRMING
+
     # If Claude says the second image (companion) is actually the front, swap so
     # eBay always gets the front card as the primary (first) image.
     if back_image_bytes is not None and info.get("first_image_is_front") is False:
@@ -627,6 +661,9 @@ def main() -> None:
                 CommandHandler("confirm", confirm),
                 CommandHandler("save", save_inventory),
                 MessageHandler(filters.PHOTO, photo_in_state),
+            ],
+            BATCH_CONFIRMING: [
+                CommandHandler("save", batch_save),
             ],
         },
         fallbacks=[

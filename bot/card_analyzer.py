@@ -80,7 +80,8 @@ Required fields:
 - condition_enum: string — one of: NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING. If a condition abbreviation sticker is visible use that mapping above; otherwise use the caption hint or infer from the card's visual condition.
 - condition_label: string — human-readable condition matching the enum (e.g. "Near Mint", "Lightly Played")
 - condition_known: boolean — true if condition came from a visible sticker/note OR from the caption; false if guessing from image alone
-- price_from_image: number or null — the numeric price from any visible sticker/note (digits only, no $ sign). If no price is visible return null.{two_image_field}{condition_hint}
+- price_from_image: number or null — the numeric price from any visible sticker/note (digits only, no $ sign). If no price is visible return null.
+- multi_card: boolean — true if this image contains MORE THAN ONE Pokémon card face visible (i.e. a batch/grid photo). false if it shows a single card.{two_image_field}{condition_hint}
 
 Return ONLY the JSON object, no markdown fences or other text."""
 
