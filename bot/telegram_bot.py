@@ -59,6 +59,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Send 1 or 2 photos of a Pokemon card (front, or front + back together).\n"
         "Put a sticker on the card with condition (NM/LP/MP/HP/DMG) and price for instant listing.\n\n"
         "Commands:\n"
+        "  /confirm  — post the card on eBay + log to Google Sheet\n"
+        "  /save     — log to Google Sheet only (no eBay listing)\n"
         "  /listings — view your active eBay listings\n"
         "  /remove   — take a listing down\n"
         "  /cancel   — cancel a listing in progress"
@@ -101,7 +103,7 @@ def _preview_text(info: dict, price: float, has_back: bool) -> str:
         f"Price:     ${price:.2f}\n"
         f"Photos:    {'front + back' if has_back else 'front only'}\n"
         f"Title:     {info['ebay_title']}\n\n"
-        "Send /confirm to post on eBay, or /cancel to abort."
+        "Send /confirm to post on eBay, /save to log to inventory only, or /cancel to abort."
     )
 
 
@@ -313,6 +315,29 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def save_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Log card to Google Sheet only — no eBay listing created."""
+    pending = context.user_data.get("pending", {})
+    info = pending.get("card_info")
+    price = pending.get("price")
+
+    if not (info and price):
+        await update.message.reply_text("Session expired. Please send the photo again.")
+        return ConversationHandler.END
+
+    await asyncio.to_thread(sheets_client.add_inventory, info, price)
+
+    context.user_data.pop("pending", None)
+    context.user_data.pop("_state", None)
+    await update.message.reply_text(
+        f"Saved to inventory ✓\n\n"
+        f"{info['card_name']} ({info['set_name']})\n"
+        f"Condition: {info['condition_label']}  |  Value: ${price:.2f}\n\n"
+        "Added to your Google Sheet. Not listed on eBay."
+    )
+    return ConversationHandler.END
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("pending", None)
     context.user_data.pop("_state", None)
@@ -461,10 +486,14 @@ def main() -> None:
             ],
             CONFIRMING: [
                 CommandHandler("confirm", confirm),
+                CommandHandler("save", save_inventory),
                 MessageHandler(filters.PHOTO, photo_in_state),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("save", save_inventory),
+        ],
         allow_reentry=False,
         block=False,
     )

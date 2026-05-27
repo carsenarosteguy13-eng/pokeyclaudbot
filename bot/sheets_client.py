@@ -102,6 +102,34 @@ def _find_sku_row(ws, sku: str) -> Optional[int]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def add_inventory(card_info: dict, price: float) -> None:
+    """Append a row for a card logged to inventory but NOT listed on eBay."""
+    if not _is_configured():
+        return
+    try:
+        ws = _get_worksheet()
+        ws.append_row(
+            [
+                datetime.now().strftime("%Y-%m-%d"),
+                card_info.get("card_name", ""),
+                card_info.get("set_name", ""),
+                card_info.get("card_number", ""),
+                card_info.get("condition_label", ""),
+                f"${price:.2f}",
+                _shipping_label(price),
+                "",          # no eBay URL
+                "In Stock",  # Status
+                "",          # Sold Price
+                "",          # Sold Date
+                "",          # SKU (no eBay listing)
+            ],
+            value_input_option="USER_ENTERED",
+        )
+        logger.info("Sheet: added inventory item '%s'", card_info.get("card_name", ""))
+    except Exception:
+        logger.exception("Sheet: failed to add inventory item")
+
+
 def add_listing(card_info: dict, price: float, ebay_url: str, sku: str) -> None:
     """Append a new row for a freshly created listing."""
     if not _is_configured():
