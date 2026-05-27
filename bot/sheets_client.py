@@ -130,6 +130,47 @@ def add_inventory(card_info: dict, price: float) -> None:
         logger.exception("Sheet: failed to add inventory item")
 
 
+def add_inventory_batch(cards: list[dict]) -> int:
+    """
+    Append multiple inventory rows in one shot (batch photo mode).
+    Each card dict needs: card_name, set_name, card_number, condition_label,
+    price_from_image (float or None).
+    Returns the number of rows successfully added.
+    """
+    if not _is_configured():
+        return 0
+    if not cards:
+        return 0
+    try:
+        ws = _get_worksheet()
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = []
+        for card in cards:
+            price = card.get("price_from_image") or 0.0
+            price_str = f"${price:.2f}" if price else ""
+            shipping = _shipping_label(price) if price else ""
+            rows.append([
+                today,
+                card.get("card_name", ""),
+                card.get("set_name", ""),
+                card.get("card_number", ""),
+                card.get("condition_label", ""),
+                price_str,
+                shipping,
+                "",          # no eBay URL
+                "In Stock",  # Status
+                "",          # Sold Price
+                "",          # Sold Date
+                "",          # SKU
+            ])
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        logger.info("Sheet: batch-added %d inventory rows", len(rows))
+        return len(rows)
+    except Exception:
+        logger.exception("Sheet: failed to batch-add inventory")
+        return 0
+
+
 def add_listing(card_info: dict, price: float, ebay_url: str, sku: str) -> None:
     """Append a new row for a freshly created listing."""
     if not _is_configured():

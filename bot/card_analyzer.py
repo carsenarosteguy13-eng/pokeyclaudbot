@@ -118,3 +118,77 @@ Return ONLY the JSON object, no markdown fences or other text."""
         if raw.startswith("json"):
             raw = raw[4:]
     return json.loads(raw.strip())
+
+
+def analyze_batch(image_bytes: bytes) -> list[dict]:
+    """
+    Identify multiple Pokémon cards from a single photo (6-9 cards laid out together).
+    Returns a list of card dicts, each with:
+      card_name, set_name, card_number, rarity, condition_label,
+      condition_known, price_from_image (float or None).
+    """
+    image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+
+    prompt = """\
+You are analyzing a photo containing multiple Pokémon TCG cards laid out together (typically 6-9 cards).
+
+TASK: Identify EVERY VISIBLE card in the photo.
+
+For EACH card:
+1. Read the card face: full card name (including suffix like V, VMAX, GX, EX), set name, \
+card number printed at the bottom, and rarity.
+2. Look carefully for a handwritten sticker or label on the card or its sleeve. It may show:
+   • A price: digits like "35", "$15", "8.50", "35#" — treat # as $
+   • A condition abbreviation: NM, LP, MP, HP, or DMG
+3. If no condition sticker is visible, estimate condition from the card's appearance.
+
+Condition meanings:
+  NM  = Near Mint
+  LP  = Lightly Played
+  MP  = Moderately Played
+  HP  = Heavily Played
+  DMG = Damaged
+
+Return a single JSON object with a "cards" array. Each element:
+{
+  "card_name": "full card name including suffix",
+  "set_name": "expansion set name",
+  "card_number": "number printed on card",
+  "rarity": "Ultra Rare / Holo Rare / Common / etc.",
+  "condition_label": "Near Mint",
+  "condition_known": true,
+  "price_from_image": 25.00
+}
+
+Set price_from_image to null if no price sticker is visible.
+Set condition_known to false if you are estimating condition from appearance.
+Include ALL visible cards — even partially obscured ones (use your best guess).
+
+Return ONLY the JSON object, no markdown fences or other text."""
+
+    response = _client.messages.create(
+        model="claude-opus-4-7",
+        max_tokens=2048,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_b64,
+                    },
+                },
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
+
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    data = json.loads(raw.strip())
+    return data.get("cards", [])

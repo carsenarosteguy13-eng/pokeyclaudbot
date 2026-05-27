@@ -47,6 +47,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 WAITING_CONDITION, WAITING_PRICE, CONFIRMING = range(3)
+BATCH_WAITING_PHOTO, BATCH_CONFIRMING = range(3, 5)
 
 
 # ---------------------------------------------------------------------------
@@ -56,14 +57,15 @@ WAITING_CONDITION, WAITING_PRICE, CONFIRMING = range(3)
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Pokemon Card eBay Lister\n\n"
-        "Send 1 or 2 photos of a Pokemon card (front, or front + back together).\n"
-        "Put a sticker on the card with condition (NM/LP/MP/HP/DMG) and price for instant listing.\n\n"
+        "Send 1 or 2 photos of a card (front, or front + back together).\n"
+        "Put a sticker with condition (NM/LP/MP/HP/DMG) and price for instant listing.\n\n"
         "Commands:\n"
         "  /confirm  — post the card on eBay + log to Google Sheet\n"
         "  /save     — log to Google Sheet only (no eBay listing)\n"
+        "  /batch    — photograph 6-9 cards at once → log all to Google Sheet\n"
         "  /listings — view your active eBay listings\n"
         "  /remove   — take a listing down\n"
-        "  /cancel   — cancel a listing in progress"
+        "  /cancel   — cancel current operation"
     )
 
 
@@ -346,6 +348,92 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 # ---------------------------------------------------------------------------
+# /batch — photograph 6-9 cards at once, log all to Google Sheet
+# ---------------------------------------------------------------------------
+
+async def cmd_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "Batch inventory mode\n\n"
+        "Send ONE photo with up to 9 cards laid out face-up. "
+        "I'll identify each card and add them all to your Google Sheet.\n\n"
+        "Tips for the best results:\n"
+        "  • Lay cards face-up in good lighting\n"
+        "  • Avoid overlapping cards\n"
+        "  • Price/condition stickers on each card will be read automatically\n\n"
+        "Send the photo now, or /cancel to abort."
+    )
+    return BATCH_WAITING_PHOTO
+
+
+async def batch_photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    status = await update.message.reply_text("Analyzing all cards — this may take a few seconds...")
+
+    photo_file = await update.message.photo[-1].get_file()
+    image_bytes = bytes(await photo_file.download_as_bytearray())
+
+    try:
+        cards = await asyncio.to_thread(card_analyzer.analyze_batch, image_bytes)
+    except Exception as exc:
+        logger.exception("Batch analysis failed")
+        await status.edit_text(f"Couldn't analyze the photo: {exc}")
+        return ConversationHandler.END
+
+    if not cards:
+        await status.edit_text(
+            "No cards detected. Make sure the card fronts are clearly visible and try again."
+        )
+        return ConversationHandler.END
+
+    context.user_data["batch_cards"] = cards
+
+    lines = [f"Found {len(cards)} card(s):\n"]
+    for i, card in enumerate(cards, 1):
+        price = card.get("price_from_image")
+        price_str = f"${price:.2f}" if price else "no price"
+        cond = card.get("condition_label", "?")
+        cond_flag = "" if card.get("condition_known") else " (?)"
+        lines.append(
+            f"{i}. {card.get('card_name', 'Unknown')} "
+            f"({card.get('set_name', '?')} #{card.get('card_number', '?')})\n"
+            f"   {cond}{cond_flag}  —  {price_str}"
+        )
+
+    lines.append(
+        "\nCondition/price marked with (?) were estimated from the card's appearance "
+        "— no sticker was visible.\n\n"
+        "Send /save to add all to your Google Sheet, or /cancel to abort."
+    )
+
+    await status.edit_text("\n".join(lines))
+    return BATCH_CONFIRMING
+
+
+async def batch_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    cards = context.user_data.pop("batch_cards", [])
+    if not cards:
+        await update.message.reply_text("Nothing to save — session expired.")
+        return ConversationHandler.END
+
+    count = await asyncio.to_thread(sheets_client.add_inventory_batch, cards)
+
+    if count:
+        await update.message.reply_text(
+            f"Saved {count} card(s) to your Google Sheet!"
+        )
+    else:
+        await update.message.reply_text(
+            "Saved to sheet! (Google Sheets not configured — check your env vars.)"
+        )
+    return ConversationHandler.END
+
+
+async def batch_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("batch_cards", None)
+    await update.message.reply_text("Batch cancelled.")
+    return ConversationHandler.END
+
+
+# ---------------------------------------------------------------------------
 # Background sold-item checker (polls eBay Orders API every 10 min)
 # ---------------------------------------------------------------------------
 
@@ -498,6 +586,20 @@ def main() -> None:
         block=False,
     )
 
+    batch_conv = ConversationHandler(
+        entry_points=[CommandHandler("batch", cmd_batch)],
+        states={
+            BATCH_WAITING_PHOTO: [
+                MessageHandler(filters.PHOTO, batch_photo_received),
+            ],
+            BATCH_CONFIRMING: [
+                CommandHandler("save", batch_save),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", batch_cancel)],
+        block=False,
+    )
+
     # Group -1: pre-cache album photos before the ConversationHandler sees them
     app.add_handler(MessageHandler(filters.PHOTO, pre_album_cache), group=-1)
 
@@ -506,6 +608,7 @@ def main() -> None:
     app.add_handler(CommandHandler("remove", cmd_remove))
     app.add_handler(CallbackQueryHandler(remove_callback, pattern=r"^remove:"))
     app.add_handler(listing_conv)
+    app.add_handler(batch_conv)
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
     app.run_polling(drop_pending_updates=True)
