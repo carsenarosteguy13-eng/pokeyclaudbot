@@ -116,26 +116,39 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     image_bytes = bytes(await photo_file.download_as_bytearray())
     caption = (update.message.caption or "").strip()
 
+    # For albums (front + back sent together): poll up to 1.5 s for the companion
+    # to appear in the pre-cache, then send BOTH images to Claude so it always
+    # identifies the front card regardless of which photo Telegram delivered first.
+    mgid = update.message.media_group_id
+    front_mid = update.message.message_id
+    back_image_bytes: bytes | None = None
+
+    if mgid:
+        for _ in range(6):  # 6 × 0.25 s = 1.5 s max wait
+            album: dict = context.user_data.get("_album_cache", {}).get(mgid, {})
+            companions = {mid: bts for mid, bts in album.items() if mid != front_mid}
+            if companions:
+                back_image_bytes = next(iter(companions.values()))
+                logger.info(
+                    "Companion found for album %s before Claude call (%d bytes)",
+                    mgid, len(back_image_bytes),
+                )
+                break
+            await asyncio.sleep(0.25)
+        if not back_image_bytes:
+            logger.info("No companion found within 1.5 s for album %s — single-image analysis", mgid)
+
     try:
-        info = await asyncio.to_thread(card_analyzer.analyze_card, image_bytes, caption)
+        # Pass companion so Claude sees both images and picks the front correctly
+        info = await asyncio.to_thread(
+            card_analyzer.analyze_card, image_bytes, caption, back_image_bytes
+        )
     except Exception as exc:
         logger.exception("Card analysis failed")
         await status.edit_text(f"Couldn't analyze the card: {exc}")
         return ConversationHandler.END
 
-    # After the slow Claude call, check the pre-cache for a companion back photo
-    # (pre_album_cache in group -1 runs before us and downloads all album photos).
-    back_image_bytes: bytes | None = None
-    mgid = update.message.media_group_id
-    front_mid = update.message.message_id
-    if mgid:
-        album: dict = context.user_data.get("_album_cache", {}).get(mgid, {})
-        for mid, bts in album.items():
-            if mid != front_mid:
-                back_image_bytes = bts
-                logger.info("Harvested back photo from pre-cache mgid=%s msg_id=%s", mgid, mid)
-                break
-
+    # back_image_bytes already resolved above (before Claude call)
     context.user_data["pending"] = {
         "card_info": info,
         "image_bytes": image_bytes,

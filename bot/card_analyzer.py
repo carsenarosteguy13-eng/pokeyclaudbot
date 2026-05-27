@@ -25,9 +25,11 @@ def parse_condition(text: str) -> tuple[str, str]:
     return "USED_GOOD", "Moderately Played"
 
 
-def analyze_card(image_bytes: bytes, caption: str = "") -> dict:
+def analyze_card(image_bytes: bytes, caption: str = "", companion_bytes: bytes | None = None) -> dict:
     """
     Identify a Pokemon card from image bytes and generate eBay listing fields.
+    companion_bytes: optional second image (card back) — when provided both images
+    are sent to Claude so it can correctly identify the front regardless of order.
     Returns a dict with: card_name, set_name, card_number, rarity, is_holo,
     ebay_title (≤80 chars), ebay_description (HTML ok), condition_enum,
     condition_label, condition_known.
@@ -39,7 +41,17 @@ def analyze_card(image_bytes: bytes, caption: str = "") -> dict:
         else ""
     )
 
-    prompt = f"""Analyze this Pokemon TCG card image carefully and return a single JSON object.
+    two_image_note = ""
+    if companion_bytes:
+        two_image_note = (
+            "You have been sent 2 photos of the same card. "
+            "One shows the FRONT (card name, HP, artwork, moves text); "
+            "the other shows the BACK (standard Pokémon TCG back design with the Pokéball logo). "
+            "Analyze the FRONT photo only — fill in ALL required fields from the front card. "
+            "Ignore the card back entirely.\n\n"
+        )
+
+    prompt = f"""{two_image_note}Analyze this Pokemon TCG card image carefully and return a single JSON object.
 
 IMPORTANT — look for a handwritten sticker, sticky note, or label anywhere in the photo (often on the card sleeve or corner). It may show:
   • A price: digits like "35", "$15", "8.50", "35#" (treat # as $)
@@ -67,23 +79,31 @@ Required fields:
 
 Return ONLY the JSON object, no markdown fences or other text."""
 
+    content: list = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": image_b64,
+            },
+        },
+    ]
+    if companion_bytes:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64.standard_b64encode(companion_bytes).decode("utf-8"),
+            },
+        })
+    content.append({"type": "text", "text": prompt})
+
     response = _client.messages.create(
         model="claude-opus-4-7",
         max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": image_b64,
-                    },
-                },
-                {"type": "text", "text": prompt},
-            ],
-        }],
+        messages=[{"role": "user", "content": content}],
     )
 
     raw = response.content[0].text.strip()
