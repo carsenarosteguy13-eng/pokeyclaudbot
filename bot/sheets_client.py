@@ -69,6 +69,11 @@ def _get_worksheet():
     return ws
 
 
+def _reset_cache() -> None:
+    global _ws_cache
+    _ws_cache = None
+
+
 def _ensure_headers(ws) -> None:
     first_row = ws.row_values(1)
     if first_row != HEADERS:
@@ -105,7 +110,10 @@ def _find_sku_row(ws, sku: str) -> Optional[int]:
 def add_inventory(card_info: dict, price: float) -> None:
     """Append a row for a card logged to inventory but NOT listed on eBay."""
     if not _is_configured():
-        return
+        raise RuntimeError(
+            "Google Sheets is not configured — "
+            "set GOOGLE_SHEETS_CREDENTIALS and GOOGLE_SHEETS_ID."
+        )
     try:
         ws = _get_worksheet()
         ws.append_row(
@@ -127,18 +135,20 @@ def add_inventory(card_info: dict, price: float) -> None:
         )
         logger.info("Sheet: added inventory item '%s'", card_info.get("card_name", ""))
     except Exception:
-        logger.exception("Sheet: failed to add inventory item")
+        _reset_cache()
+        raise
 
 
 def add_inventory_batch(cards: list[dict]) -> int:
     """
     Append multiple inventory rows in one shot (batch photo mode).
-    Each card dict needs: card_name, set_name, card_number, condition_label,
-    price_from_image (float or None).
-    Returns the number of rows successfully added.
+    Raises on failure so the caller can report the error to the user.
     """
     if not _is_configured():
-        return 0
+        raise RuntimeError(
+            "Google Sheets is not configured — "
+            "set GOOGLE_SHEETS_CREDENTIALS and GOOGLE_SHEETS_ID."
+        )
     if not cards:
         return 0
     try:
@@ -167,8 +177,8 @@ def add_inventory_batch(cards: list[dict]) -> int:
         logger.info("Sheet: batch-added %d inventory rows", len(rows))
         return len(rows)
     except Exception:
-        logger.exception("Sheet: failed to batch-add inventory")
-        return 0
+        _reset_cache()
+        raise
 
 
 def get_in_stock() -> list[dict]:

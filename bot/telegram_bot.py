@@ -362,15 +362,20 @@ async def save_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Session expired. Please send the photo again.")
         return ConversationHandler.END
 
-    await asyncio.to_thread(sheets_client.add_inventory, info, price)
+    try:
+        await asyncio.to_thread(sheets_client.add_inventory, info, price)
+        sheet_note = "Added to your Google Sheet."
+    except Exception as exc:
+        logger.exception("Sheet add_inventory failed")
+        sheet_note = f"Google Sheet update failed: {exc}"
 
     context.user_data.pop("pending", None)
     context.user_data.pop("_state", None)
     await update.message.reply_text(
-        f"Saved to inventory ✓\n\n"
+        f"Saved to inventory\n\n"
         f"{info['card_name']} ({info['set_name']})\n"
         f"Condition: {info['condition_label']}  |  Value: ${price:.2f}\n\n"
-        "Added to your Google Sheet. Not listed on eBay."
+        f"{sheet_note} Not listed on eBay."
     )
     return ConversationHandler.END
 
@@ -455,16 +460,12 @@ async def batch_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("Nothing to save — session expired.")
         return ConversationHandler.END
 
-    count = await asyncio.to_thread(sheets_client.add_inventory_batch, cards)
-
-    if count:
-        await update.message.reply_text(
-            f"Saved {count} card(s) to your Google Sheet!"
-        )
-    else:
-        await update.message.reply_text(
-            "Saved to sheet! (Google Sheets not configured — check your env vars.)"
-        )
+    try:
+        count = await asyncio.to_thread(sheets_client.add_inventory_batch, cards)
+        await update.message.reply_text(f"Saved {count} card(s) to your Google Sheet!")
+    except Exception as exc:
+        logger.exception("Sheet add_inventory_batch failed")
+        await update.message.reply_text(f"Google Sheet update failed: {exc}")
     return ConversationHandler.END
 
 
