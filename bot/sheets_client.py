@@ -4,11 +4,13 @@ Google Sheets inventory tracker for the Pokemon Card eBay Lister.
 Sheet columns (row 1 = headers, frozen):
   A  Date Listed   B  Card Name   C  Set        D  Number    E  Condition
   F  List Price    G  Shipping    H  eBay URL    I  Status
-  J  Sold Price    K  Sold Date   L  SKU
+  J  Sold Price    K  Sold Date   L  SKU         M  Offer ID  N  Chat ID
+
+Columns M and N are only filled for eBay listings (add_listing).
+They are used by /remove so active listings survive Render redeploys.
 
 Set GOOGLE_SHEETS_CREDENTIALS (service-account JSON as a string) and
 GOOGLE_SHEETS_ID in your environment to enable this module.
-All public functions silently no-op when credentials are absent.
 """
 
 import json
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 HEADERS = [
     "Date Listed", "Card Name", "Set", "Number", "Condition",
     "List Price", "Shipping", "eBay URL", "Status",
-    "Sold Price", "Sold Date", "SKU",
+    "Sold Price", "Sold Date", "SKU", "Offer ID", "Chat ID",
 ]
 
 # 1-based column indices keyed by header name
@@ -74,11 +76,21 @@ def _reset_cache() -> None:
     _ws_cache = None
 
 
+def _col_letter(n: int) -> str:
+    """Convert 1-based column number to letter (1→A, 14→N, etc.)."""
+    result = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        result = chr(65 + r) + result
+    return result
+
+
 def _ensure_headers(ws) -> None:
     first_row = ws.row_values(1)
-    if first_row != HEADERS:
-        ws.update("A1:L1", [HEADERS])
-        ws.format("A1:L1", {
+    last_col = _col_letter(len(HEADERS))
+    if first_row[:len(HEADERS)] != HEADERS:
+        ws.update(f"A1:{last_col}1", [HEADERS])
+        ws.format(f"A1:{last_col}1", {
             "textFormat": {"bold": True},
             "backgroundColor": {"red": 0.2, "green": 0.2, "blue": 0.2},
         })
@@ -219,7 +231,8 @@ def mark_removed_row(row: int) -> None:
         logger.exception("Sheet: failed to mark row %d as Removed", row)
 
 
-def add_listing(card_info: dict, price: float, ebay_url: str, sku: str) -> None:
+def add_listing(card_info: dict, price: float, ebay_url: str, sku: str,
+                offer_id: str = "", chat_id: int = 0) -> None:
     """Append a new row for a freshly created listing."""
     if not _is_configured():
         return
@@ -236,15 +249,79 @@ def add_listing(card_info: dict, price: float, ebay_url: str, sku: str) -> None:
                 _shipping_label(price),
                 ebay_url,
                 "Active",
-                "",
-                "",
+                "",          # Sold Price
+                "",          # Sold Date
                 sku,
+                offer_id,
+                str(chat_id) if chat_id else "",
             ],
             value_input_option="USER_ENTERED",
         )
         logger.info("Sheet: added listing %s", sku)
     except Exception:
         logger.exception("Sheet: failed to add listing %s", sku)
+
+
+def get_active_listings(chat_id: int) -> list[dict]:
+    """Return all rows with Status='Active' for this chat, newest first.
+    Used by /remove so listings survive Render redeploys.
+    """
+    if not _is_configured():
+        return []
+    try:
+        ws = _get_worksheet()
+        all_rows = ws.get_all_values()
+        result = []
+        for i, row in enumerate(all_rows[1:], start=2):
+            while len(row) < len(HEADERS):
+                row.append("")
+            if row[_COL["Status"] - 1] != "Active":
+                continue
+            row_chat = row[_COL["Chat ID"] - 1].strip()
+            # Include rows that match this chat_id OR have no chat_id (legacy rows)
+            if row_chat and row_chat != str(chat_id):
+                continue
+            result.append({
+                "row":       i,
+                "card_name": row[_COL["Card Name"] - 1],
+                "set_name":  row[_COL["Set"] - 1],
+                "condition": row[_COL["Condition"] - 1],
+                "price":     row[_COL["List Price"] - 1],
+                "sku":       row[_COL["SKU"] - 1],
+                "offer_id":  row[_COL["Offer ID"] - 1],
+                "ebay_url":  row[_COL["eBay URL"] - 1],
+            })
+        return list(reversed(result))
+    except Exception:
+        logger.exception("Sheet: failed to get active listings")
+        return []
+
+
+def get_listing_by_sku(sku: str) -> Optional[dict]:
+    """Look up an active listing by SKU. Used by the sold checker."""
+    if not _is_configured():
+        return None
+    try:
+        ws = _get_worksheet()
+        all_rows = ws.get_all_values()
+        for i, row in enumerate(all_rows[1:], start=2):
+            while len(row) < len(HEADERS):
+                row.append("")
+            if row[_COL["SKU"] - 1] == sku and row[_COL["Status"] - 1] == "Active":
+                return {
+                    "row":       i,
+                    "card_name": row[_COL["Card Name"] - 1],
+                    "set_name":  row[_COL["Set"] - 1],
+                    "condition": row[_COL["Condition"] - 1],
+                    "price":     row[_COL["List Price"] - 1],
+                    "sku":       sku,
+                    "offer_id":  row[_COL["Offer ID"] - 1],
+                    "chat_id":   row[_COL["Chat ID"] - 1],
+                }
+        return None
+    except Exception:
+        logger.exception("Sheet: failed to look up SKU %s", sku)
+        return None
 
 
 def mark_sold(sku: str, sold_price: float) -> None:

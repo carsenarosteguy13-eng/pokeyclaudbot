@@ -338,7 +338,8 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         ebay_url=result["ebay_url"],
     )
     await asyncio.to_thread(
-        sheets_client.add_listing, info, price, result["ebay_url"], result["sku"]
+        sheets_client.add_listing, info, price, result["ebay_url"], result["sku"],
+        result["offer_id"], update.effective_chat.id,
     )
 
     context.user_data.pop("pending", None)
@@ -486,30 +487,33 @@ async def _sold_checker_loop(app) -> None:
         try:
             sold_items = await asyncio.to_thread(ebay_client.check_for_sold_items)
             for item in sold_items:
-                listing = listing_store.get_by_sku(item["sku"])
+                # Use sheet as source of truth (survives redeploys)
+                listing = await asyncio.to_thread(
+                    sheets_client.get_listing_by_sku, item["sku"]
+                )
                 if not listing:
                     continue
-                if listing.get("sold_price"):
-                    continue  # already recorded
 
                 sold_price = item["sold_price"]
                 sold_date  = item["sold_date"]
-                listing_store.mark_sold(listing["id"], sold_price, sold_date)
                 await asyncio.to_thread(sheets_client.mark_sold, item["sku"], sold_price)
 
-                try:
-                    await app.bot.send_message(
-                        chat_id=listing["chat_id"],
-                        text=(
-                            f"🎉 Sold!\n\n"
-                            f"{listing['card_name']} ({listing['set_name']})\n"
-                            f"Condition: {listing['condition']}\n"
-                            f"Listed at: ${listing['price']:.2f}  →  "
-                            f"Sold for: ${sold_price:.2f}"
-                        ),
-                    )
-                except Exception:
-                    logger.exception("Failed to send sold notification")
+                chat_id = listing.get("chat_id", "")
+                if chat_id:
+                    try:
+                        price_val = listing["price"].lstrip("$") or "0"
+                        await app.bot.send_message(
+                            chat_id=int(chat_id),
+                            text=(
+                                f"Sold!\n\n"
+                                f"{listing['card_name']} ({listing['set_name']})\n"
+                                f"Condition: {listing['condition']}\n"
+                                f"Listed at: {listing['price']}  →  "
+                                f"Sold for: ${sold_price:.2f}"
+                            ),
+                        )
+                    except Exception:
+                        logger.exception("Failed to send sold notification")
 
         except Exception:
             logger.exception("Sold checker error")
@@ -544,14 +548,14 @@ async def cmd_listings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ---------------------------------------------------------------------------
 
 async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    rows = listing_store.get_all(update.effective_chat.id)
+    rows = await asyncio.to_thread(sheets_client.get_active_listings, update.effective_chat.id)
     if not rows:
-        await update.message.reply_text("You have no active listings to remove.")
+        await update.message.reply_text("You have no active eBay listings.")
         return
     keyboard = [
         [InlineKeyboardButton(
-            f"{r['card_name']} — ${r['price']:.2f}",
-            callback_data=f"remove:{r['id']}",
+            f"{r['card_name']} — {r['price']} [{r['condition']}]",
+            callback_data=f"remove:{r['row']}",
         )]
         for r in rows
     ]
@@ -613,16 +617,23 @@ async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if payload == "cancel":
         await query.edit_message_text("Removal cancelled.")
         return
-    db_id = int(payload)
-    listing = listing_store.get_by_id(db_id)
+
+    # payload is the 1-based sheet row number
+    row = int(payload)
+    # Re-fetch this specific row's data from the sheet
+    listings = await asyncio.to_thread(
+        sheets_client.get_active_listings, query.message.chat.id
+    )
+    listing = next((r for r in listings if r["row"] == row), None)
     if not listing:
         await query.edit_message_text("Listing not found (already removed?).")
         return
+
     await query.edit_message_text(f"Removing {listing['card_name']}...")
     try:
-        await asyncio.to_thread(ebay_client.end_listing, listing["offer_id"])
-        listing_store.delete(db_id)
-        await asyncio.to_thread(sheets_client.mark_removed, listing["sku"])
+        if listing.get("offer_id"):
+            await asyncio.to_thread(ebay_client.end_listing, listing["offer_id"])
+        await asyncio.to_thread(sheets_client.mark_removed_row, row)
         await query.edit_message_text(
             f"Removed: {listing['card_name']} ({listing['set_name']})\n"
             f"The eBay listing has been ended."
