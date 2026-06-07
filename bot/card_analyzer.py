@@ -25,6 +25,74 @@ def parse_condition(text: str) -> tuple[str, str]:
     return "USED_GOOD", "Moderately Played"
 
 
+_COND_ABBREV = {
+    "NEW":                      "NM",
+    "LIKE_NEW":                 "NM",
+    "USED_EXCELLENT":           "NM",
+    "USED_VERY_GOOD":           "LP",
+    "USED_GOOD":                "MP",
+    "USED_ACCEPTABLE":          "HP",
+    "FOR_PARTS_OR_NOT_WORKING": "DMG",
+}
+
+
+def _build_title(info: dict) -> str:
+    """Build an eBay title (≤80 chars) from card fields."""
+    abbrev = _COND_ABBREV.get(info.get("condition_enum", ""), "")
+    parts = ["Pokemon Card", info.get("card_name", "Unknown")]
+    if info.get("card_number"):
+        parts.append(info["card_number"])
+    if info.get("set_name"):
+        parts.append(info["set_name"])
+    if info.get("rarity"):
+        parts.append(info["rarity"])
+    if info.get("is_holo") and "Holo" not in " ".join(parts):
+        parts.append("Holo")
+    if abbrev:
+        parts.append(abbrev)
+    title = " ".join(parts)
+    if len(title) > 80:
+        title = title[:80].rsplit(" ", 1)[0]  # trim at last space
+    return title
+
+
+def _build_description(info: dict, caption: str = "") -> str:
+    """Build an eBay HTML description from card fields."""
+    title      = info.get("ebay_title", "")
+    card_name  = info.get("card_name", "")
+    set_name   = info.get("set_name", "")
+    number     = info.get("card_number", "")
+    condition  = info.get("condition_label", "")
+    rarity     = info.get("rarity", "")
+
+    lines = [f"<b>{title}</b><br><br>"]
+
+    card_desc = card_name
+    if rarity:
+        card_desc += f" ({rarity})"
+    set_part = ""
+    if set_name and number:
+        set_part = f" from the {set_name} set, card number {number}"
+    elif set_name:
+        set_part = f" from the {set_name} set"
+
+    lines.append(
+        f"This listing is for a <b>{condition}</b> {card_desc}{set_part}. "
+        f"The card is in {condition} condition and will ship carefully in a protective sleeve."
+    )
+
+    # Include any seller notes from the caption (beyond condition/price)
+    extra = caption.strip()
+    for word in ["NM", "LP", "MP", "HP", "DMG", "near mint", "lightly", "moderately",
+                 "heavily", "damaged"]:
+        extra = extra.replace(word, "").replace(word.upper(), "")
+    extra = " ".join(extra.split())
+    if extra:
+        lines.append(f"<br>{extra}")
+
+    return "".join(lines)
+
+
 def analyze_card(image_bytes: bytes, caption: str = "", companion_bytes: bytes | None = None) -> dict:
     """
     Identify a Pokemon card from image bytes and generate eBay listing fields.
@@ -75,8 +143,6 @@ Required fields:
 - card_number: string — number printed on card (e.g. "020/189")
 - rarity: string — rarity symbol/label (e.g. "Ultra Rare", "Holo Rare", "Common", "Secret Rare")
 - is_holo: boolean
-- ebay_title: string — eBay listing title, MAXIMUM 80 CHARACTERS. Include "Pokemon Card", card name, set, number, rarity, and the condition abbreviation that matches condition_label: Near Mint→NM, Lightly Played→LP, Moderately Played→MP, Heavily Played→HP, Damaged→DMG. Example for a Lightly Played card: "Pokemon Card Charizard VMAX 020/189 Darkness Ablaze Ultra Rare Holo LP". The abbreviation in the title MUST match the actual condition — never default to NM.
-- ebay_description: string — eBay listing description using basic HTML tags (<b>, <br>, <ul>). MUST start with the full listing title in <b> tags, then a line break, then 3-4 sentences covering the card name, set, number, the ACTUAL condition_label (spell it out fully, e.g. "Lightly Played" or "Moderately Played" — never substitute a different condition), and that it ships in a protective sleeve. If the seller included any extra notes in their caption beyond the condition (e.g. "pulled from booster pack", "great gift"), incorporate those naturally into the description.
 - condition_enum: string — one of: NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING. If a condition abbreviation sticker is visible use that mapping above; otherwise use the caption hint or infer from the card's visual condition.
 - condition_label: string — human-readable condition matching the enum (e.g. "Near Mint", "Lightly Played")
 - condition_known: boolean — true if condition came from a visible sticker/note OR from the caption; false if guessing from image alone
@@ -118,7 +184,12 @@ Return ONLY the JSON object, no markdown fences or other text."""
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
-    return json.loads(raw.strip())
+    info = json.loads(raw.strip())
+
+    # Build title and description in Python so condition is always accurate
+    info["ebay_title"] = _build_title(info)
+    info["ebay_description"] = _build_description(info, caption)
+    return info
 
 
 def analyze_batch(image_bytes: bytes) -> list[dict]:
