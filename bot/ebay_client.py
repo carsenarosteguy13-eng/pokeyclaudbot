@@ -104,7 +104,7 @@ def _headers() -> dict:
 # ---------------------------------------------------------------------------
 
 # Price thresholds for shipping tiers
-_TIER_ENVELOPE_MAX = 30.0   # $0–$30  → eBay Standard Envelope
+_TIER_ENVELOPE_MAX = 20.0   # $0–$20  → eBay Standard Envelope
 _TIER_GROUND_MAX   = 100.0  # $30–$100 → USPS Ground Advantage
 #                            # $100+   → USPS Priority Mail
 

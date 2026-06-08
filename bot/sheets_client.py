@@ -98,7 +98,7 @@ def _ensure_headers(ws) -> None:
 
 
 def _shipping_label(price: float) -> str:
-    if price <= 30:
+    if price <= 20:
         return "Standard Envelope ($1)"
     elif price <= 100:
         return "Ground Advantage ($4)"
