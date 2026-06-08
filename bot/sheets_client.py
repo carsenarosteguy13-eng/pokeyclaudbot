@@ -100,11 +100,11 @@ def _ensure_headers(ws) -> None:
 
 def _shipping_label(price: float) -> str:
     if price <= 20:
-        return "Standard Envelope ($1)"
+        return "Standard Envelope ($0.74)"
     elif price <= 100:
-        return "Ground Advantage ($4)"
+        return "Ground Advantage ($6)"
     else:
-        return "Priority Mail ($10)"
+        return "Priority Mail ($15)"
 
 
 def _find_sku_row(ws, sku: str) -> Optional[int]:

@@ -39,7 +39,7 @@ def _get_access_token() -> str:
             "refresh_token": EBAY_REFRESH_TOKEN,
             "scope": (
                 "https://api.ebay.com/oauth/api_scope/sell.inventory "
-                "https://api.ebay.com/oauth/api_scope/sell.account.readonly"
+                "https://api.ebay.com/oauth/api_scope/sell.account"
             ),
         },
         timeout=15,
@@ -104,9 +104,9 @@ def _headers() -> dict:
 # ---------------------------------------------------------------------------
 
 # Price thresholds for shipping tiers
-_TIER_ENVELOPE_MAX = 20.0   # $0–$20  → eBay Standard Envelope
-_TIER_GROUND_MAX   = 100.0  # $30–$100 → USPS Ground Advantage
-#                            # $100+   → USPS Priority Mail
+_TIER_ENVELOPE_MAX = 20.0   # $0–$20   → eBay Standard Envelope  (label ~$0.74, charge $1)
+_TIER_GROUND_MAX   = 100.0  # $20–$100 → USPS Ground Advantage    (label ~$6,    charge $7.50)
+#                            # $100+    → USPS Priority Mail        (label ~$15+,  charge $15)
 
 # Keywords used to identify policies by name or service code
 _TIER_KEYWORDS = {
