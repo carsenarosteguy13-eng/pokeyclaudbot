@@ -66,6 +66,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "  /listings     — view your active eBay listings\n"
         "  /remove       — take an eBay listing down\n"
         "  /removestock  — remove an in-stock (non-eBay) card from inventory\n"
+        "  /stats        — revenue vs shipping costs\n"
         "  /cancel       — cancel current operation"
     )
 
@@ -644,6 +645,40 @@ async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ---------------------------------------------------------------------------
+# /stats
+# ---------------------------------------------------------------------------
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tally shipping label costs vs revenue from sold cards."""
+    summary = await asyncio.to_thread(sheets_client.get_sales_summary)
+
+    sold    = summary["sold_count"]
+    active  = summary["active_count"]
+    stock   = summary["in_stock_count"]
+    revenue = summary["total_revenue"]
+    ship    = summary["total_shipping"]
+    net     = summary["net"]
+
+    if sold == 0 and active == 0 and stock == 0:
+        await update.message.reply_text(
+            "No data yet — your Google Sheet appears empty or isn't configured."
+        )
+        return
+
+    lines = [
+        "Sales Summary\n",
+        f"Cards sold:      {sold}",
+        f"Active listings: {active}",
+        f"In stock:        {stock}",
+        "",
+        f"Revenue (sold):  ${revenue:.2f}",
+        f"Shipping labels: −${ship:.2f}",
+        f"Net:             ${net:.2f}",
+    ]
+    await update.message.reply_text("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -705,6 +740,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.PHOTO, pre_album_cache), group=-1)
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("listings", cmd_listings))
     app.add_handler(CommandHandler("remove", cmd_remove))
     app.add_handler(CommandHandler("removestock", cmd_removestock))

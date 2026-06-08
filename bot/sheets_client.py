@@ -16,6 +16,7 @@ GOOGLE_SHEETS_ID in your environment to enable this module.
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -357,3 +358,74 @@ def mark_removed(sku: str) -> None:
         logger.info("Sheet: marked removed %s", sku)
     except Exception:
         logger.exception("Sheet: failed to mark removed %s", sku)
+
+
+def get_sales_summary() -> dict:
+    """
+    Tally sold revenue, shipping label costs, and inventory counts.
+
+    Returns a dict:
+      sold_count      — number of rows with Status="Sold"
+      active_count    — number of rows with Status="Active"
+      in_stock_count  — number of rows with Status="In Stock"
+      total_revenue   — sum of Sold Price values for sold rows
+      total_shipping  — sum of shipping label costs for sold rows
+                        (extracted from labels like "Ground Advantage ($4)")
+      net             — total_revenue − total_shipping
+    """
+    if not _is_configured():
+        return {
+            "sold_count": 0, "active_count": 0, "in_stock_count": 0,
+            "total_revenue": 0.0, "total_shipping": 0.0, "net": 0.0,
+        }
+    try:
+        ws = _get_worksheet()
+        all_rows = ws.get_all_values()
+
+        sold_count = active_count = in_stock_count = 0
+        total_revenue = 0.0
+        total_shipping = 0.0
+
+        # Regex: pull the dollar amount from labels like "Ground Advantage ($4)"
+        _ship_re = re.compile(r'\(\$(\d+(?:\.\d+)?)\)')
+
+        for row in all_rows[1:]:  # skip header
+            while len(row) < len(HEADERS):
+                row.append("")
+
+            status = row[_COL["Status"] - 1].strip()
+
+            if status == "Active":
+                active_count += 1
+            elif status == "In Stock":
+                in_stock_count += 1
+            elif status == "Sold":
+                sold_count += 1
+
+                # Revenue: Sold Price column (col J), stored as "$35.00" or "35.00"
+                sold_price_str = row[_COL["Sold Price"] - 1].strip().lstrip("$")
+                try:
+                    total_revenue += float(sold_price_str)
+                except ValueError:
+                    pass
+
+                # Shipping cost: extract from label, e.g. "Priority Mail ($10)" → 10.0
+                shipping_label = row[_COL["Shipping"] - 1]
+                m = _ship_re.search(shipping_label)
+                if m:
+                    total_shipping += float(m.group(1))
+
+        return {
+            "sold_count":     sold_count,
+            "active_count":   active_count,
+            "in_stock_count": in_stock_count,
+            "total_revenue":  total_revenue,
+            "total_shipping": total_shipping,
+            "net":            total_revenue - total_shipping,
+        }
+    except Exception:
+        logger.exception("Sheet: failed to compute sales summary")
+        return {
+            "sold_count": 0, "active_count": 0, "in_stock_count": 0,
+            "total_revenue": 0.0, "total_shipping": 0.0, "net": 0.0,
+        }
